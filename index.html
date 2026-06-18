@@ -186,8 +186,8 @@
     </div>
   </div>
 
-  <!-- Microsoft Speech SDK for webblasare -->
-  <script src="https://aka.ms/csspeech/jsbrowserpackage"></script>
+  <!-- Microsoft Speech SDK for webblasare (officiell CDN via jsDelivr) -->
+  <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@latest/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
   <script>
   (function(){
     "use strict";
@@ -384,6 +384,7 @@
 
     function start(){
       if(!saved()){ openSetup(); return; }
+      if(!SpeechSDK){ SpeechSDK = window.SpeechSDK; }
       if(!SpeechSDK){ setStatus("SDK laddades inte", "err"); return; }
       manualStop = false;
       try{
@@ -500,7 +501,13 @@
       render();
       if(saved()){ setStatus("redo att starta", null); }
       else { openSetup(); }
-      if(!SpeechSDK){ setStatus("SDK laddades inte, kontrollera internet", "err"); }
+      ensureSDK(0);
+    }
+
+    function ensureSDK(tries){
+      if(window.SpeechSDK){ SpeechSDK = window.SpeechSDK; return; }
+      if(tries < 25){ setTimeout(function(){ ensureSDK(tries+1); }, 200); return; }
+      setStatus("SDK laddades inte, kontrollera internet eller en blockerare", "err");
     }
 
     if(sessionStorage.getItem("unlocked") === "1"){
