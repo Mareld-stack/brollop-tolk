@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live oversattning</title>
+<style>
+  :root{
+    --ink:#15120E;          /* varm nara-svart bakgrund */
+    --ink-soft:#1F1B16;     /* paneler */
+    --paper:#F4ECDD;        /* text */
+    --paper-dim:#8C8474;    /* dampad text, interim */
+    --gold:#C8A24A;         /* accent */
+    --sv:#7FB1D8;
+    --en:#D8A657;
+    --es:#C8736A;
+    --ok:#6FBF8B;
+    --warn:#D8A657;
+    --err:#C8736A;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--ink);
+    color:var(--paper);
+    font-family:"Inter","Helvetica Neue",Arial,sans-serif;
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+  }
+
+  /* topbar */
+  .bar{
+    display:flex;align-items:center;gap:14px;
+    padding:14px 20px;
+    border-bottom:1px solid rgba(244,236,221,.08);
+    flex:0 0 auto;
+  }
+  .speaking{
+    display:flex;align-items:center;gap:10px;
+    font-size:14px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--paper-dim);
+  }
+  .speaking b{color:var(--paper);font-weight:600;letter-spacing:.04em;text-transform:none;font-size:16px}
+  .spacer{flex:1}
+  .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--paper-dim)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--paper-dim);transition:background .3s}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.err{background:var(--err)}
+  button{
+    font:inherit;font-size:14px;
+    color:var(--paper);background:transparent;
+    border:1px solid rgba(244,236,221,.18);
+    padding:8px 16px;border-radius:999px;cursor:pointer;
+    transition:border-color .2s,background .2s;
+  }
+  button:hover{border-color:var(--gold)}
+  button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  button.primary{background:var(--gold);border-color:var(--gold);color:#1a1610;font-weight:600}
+  button.primary:hover{filter:brightness(1.08)}
+
+  /* paneler */
+  .stage{flex:1;display:flex;flex-direction:column;min-height:0}
+  .panel{
+    flex:1;display:flex;flex-direction:column;justify-content:center;
+    padding:4vh 6vw;min-height:0;
+    border-bottom:1px solid rgba(244,236,221,.06);
+  }
+  .panel:last-child{border-bottom:none}
+  .label{
+    display:flex;align-items:center;gap:12px;
+    font-size:clamp(13px,1.4vw,18px);letter-spacing:.2em;text-transform:uppercase;
+    color:var(--paper-dim);margin-bottom:2vh;
+  }
+  .label .swatch{width:14px;height:14px;border-radius:50%}
+  .text{
+    font-size:clamp(28px,4.6vw,76px);line-height:1.18;font-weight:500;
+    overflow-wrap:break-word;
+  }
+  .text .interim{color:var(--paper-dim)}
+  .placeholder{color:var(--paper-dim);font-weight:400;font-size:clamp(20px,2.6vw,40px)}
+
+  /* setup overlay */
+  .overlay{
+    position:fixed;inset:0;background:rgba(10,8,6,.86);
+    display:flex;align-items:center;justify-content:center;padding:24px;z-index:50;
+  }
+  .overlay[hidden]{display:none}
+  .card{
+    background:var(--ink-soft);border:1px solid rgba(244,236,221,.12);
+    border-radius:18px;padding:32px;width:min(520px,100%);
+  }
+  .card h1{font-size:22px;font-weight:600;margin-bottom:6px}
+  .card p.sub{color:var(--paper-dim);font-size:14px;margin-bottom:22px;line-height:1.5}
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:13px;color:var(--paper-dim);margin-bottom:6px;letter-spacing:.02em}
+  .field input,.field select{
+    width:100%;font:inherit;font-size:15px;color:var(--paper);
+    background:var(--ink);border:1px solid rgba(244,236,221,.18);
+    border-radius:10px;padding:11px 13px;
+  }
+  .field input:focus,.field select:focus{outline:none;border-color:var(--gold)}
+  .row{display:flex;gap:12px}
+  .row .field{flex:1}
+  .hint{font-size:12.5px;color:var(--paper-dim);line-height:1.5;margin-top:4px}
+  .hint a{color:var(--gold)}
+  .actions{display:flex;gap:12px;margin-top:24px}
+  .actions button{flex:1;justify-content:center}
+  .err-msg{color:var(--err);font-size:13px;margin-top:14px;min-height:18px}
+  .help{margin-top:18px;font-size:12.5px;color:var(--paper-dim);line-height:1.6;border-top:1px solid rgba(244,236,221,.1);padding-top:16px}
+  code{background:var(--ink);padding:2px 6px;border-radius:5px;font-size:12px}
+</style>
+</head>
+<body>
+
+  <div class="bar">
+    <div class="speaking">
+      <span>Talar</span>
+      <b id="speakingLang">väntar</b>
+    </div>
+    <div class="spacer"></div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">inte startad</span></div>
+    <button id="startBtn" class="primary">Starta</button>
+    <button id="clearBtn">Rensa</button>
+    <button id="fsBtn">Helskärm</button>
+    <button id="setupBtn">Inställningar</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="panel" data-slot="0">
+      <div class="label"><span class="swatch"></span><span class="lname"></span></div>
+      <div class="text"><span class="placeholder">Översättning visas här</span></div>
+    </div>
+    <div class="panel" data-slot="1">
+      <div class="label"><span class="swatch"></span><span class="lname"></span></div>
+      <div class="text"><span class="placeholder">Översättning visas här</span></div>
+    </div>
+  </div>
+
+  <!-- L-senordslas -->
+  <div class="overlay" id="lockOverlay" hidden>
+    <div class="card">
+      <h1>Lösenord</h1>
+      <p class="sub">Ange lösenordet för att öppna plattformen.</p>
+      <div class="field">
+        <label for="pw">Lösenord</label>
+        <input id="pw" type="password" autocomplete="off" placeholder="lösenord">
+      </div>
+      <div class="actions">
+        <button id="unlockBtn" class="primary">Lås upp</button>
+      </div>
+      <div class="err-msg" id="pwErr"></div>
+    </div>
+  </div>
+
+  <!-- Setup -->
+  <div class="overlay" id="overlay" hidden>
+    <div class="card">
+      <h1>Koppla till Azure</h1>
+      <p class="sub">Det enda du behöver fylla i är din Azure Speech-nyckel och region. De sparas lokalt i den här webbläsaren, så du gör det bara en gång.</p>
+
+      <div class="field">
+        <label for="key">Speech-nyckel</label>
+        <input id="key" type="password" autocomplete="off" placeholder="klistra in nyckeln">
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="region">Region</label>
+          <input id="region" type="text" autocomplete="off" placeholder="t.ex. swedencentral">
+        </div>
+        <div class="field">
+          <label for="mic">Mikrofon</label>
+          <select id="mic"><option value="">Standardmikrofon</option></select>
+        </div>
+      </div>
+      <p class="hint">Region är namnet utan mellanslag, t.ex. <code>swedencentral</code> eller <code>westeurope</code>. Hittas i Azure-portalen på din Speech-resurs, under Keys and Endpoint.</p>
+
+      <div class="actions">
+        <button id="refreshMics">Hitta mikrofoner</button>
+        <button id="saveBtn" class="primary">Spara och stäng</button>
+      </div>
+      <div class="err-msg" id="setupErr"></div>
+
+      <div class="help">
+        Kör filen via en lokal server, annars släpper inte webbläsaren fram mikrofonen. Stå i mappen där filen ligger och kör <code>python3 -m http.server 8000</code>, öppna sedan <code>http://localhost:8000</code> i Chrome. Har du Node istället: <code>npx serve</code>.
+      </div>
+    </div>
+  </div>
+
+  <!-- Microsoft Speech SDK for webblasare -->
+  <script src="https://aka.ms/csspeech/jsbrowserpackage"></script>
+  <script>
+  (function(){
+    "use strict";
+
+    // Sprakuppsattning. Kallsprak for detektering anvander locale (sv-SE),
+    // malsprak for oversattning anvander tvabokstavskod (sv).
+    var LANGS = {
+      sv: { source:"sv-SE", name:"Svenska", color:"#7FB1D8", ph:"Översättning visas här" },
+      en: { source:"en-US", name:"English", color:"#D8A657", ph:"Translation will appear here" },
+      es: { source:"es-CL", name:"Español", color:"#C8736A", ph:"La traducción aparecerá aquí" }
+    };
+    var SOURCE_LANGS = ["sv-SE","en-US","es-CL"]; // kandidater for sprakidentifiering
+    var TARGET_LANGS = ["sv","en","es"];          // alla mojliga malsprak
+
+    var SpeechSDK = window.SpeechSDK;
+    var recognizer = null;
+    var running = false;
+    var manualStop = false;
+    var restartTimer = null;
+
+    // aktuellt tillstand per malsprak: {final, interim}
+    var lines = { sv:{final:"",interim:""}, en:{final:"",interim:""}, es:{final:"",interim:""} };
+    var currentSource = null; // tvabokstavskod for det som talas just nu
+
+    // DOM
+    var el = {
+      overlay: document.getElementById("overlay"),
+      key: document.getElementById("key"),
+      region: document.getElementById("region"),
+      mic: document.getElementById("mic"),
+      saveBtn: document.getElementById("saveBtn"),
+      refreshMics: document.getElementById("refreshMics"),
+      setupErr: document.getElementById("setupErr"),
+      startBtn: document.getElementById("startBtn"),
+      clearBtn: document.getElementById("clearBtn"),
+      fsBtn: document.getElementById("fsBtn"),
+      setupBtn: document.getElementById("setupBtn"),
+      dot: document.getElementById("dot"),
+      statusText: document.getElementById("statusText"),
+      speakingLang: document.getElementById("speakingLang"),
+      panels: Array.prototype.slice.call(document.querySelectorAll(".panel"))
+    };
+
+    // ---- lagring ----
+    function load(){
+      el.key.value = localStorage.getItem("az_key") || "";
+      el.region.value = localStorage.getItem("az_region") || "";
+    }
+    function saved(){ return localStorage.getItem("az_key") && localStorage.getItem("az_region"); }
+
+    // ---- status ----
+    function setStatus(text, cls){
+      el.statusText.textContent = text;
+      el.dot.className = "dot" + (cls ? " "+cls : "");
+    }
+
+    // ---- mikrofoner ----
+    function refreshMics(){
+      if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices){
+        el.setupErr.textContent = "Webbläsaren listar inga enheter. Kör via localhost.";
+        return;
+      }
+      // be om tillstand sa att enhetsnamn blir synliga
+      navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+        stream.getTracks().forEach(function(t){ t.stop(); });
+        return navigator.mediaDevices.enumerateDevices();
+      }).then(function(devs){
+        var saved = localStorage.getItem("az_mic") || "";
+        el.mic.innerHTML = '<option value="">Standardmikrofon</option>';
+        devs.filter(function(d){ return d.kind === "audioinput"; }).forEach(function(d,i){
+          var o = document.createElement("option");
+          o.value = d.deviceId;
+          o.textContent = d.label || ("Mikrofon " + (i+1));
+          if(d.deviceId === saved) o.selected = true;
+          el.mic.appendChild(o);
+        });
+        el.setupErr.textContent = "";
+      }).catch(function(e){
+        el.setupErr.textContent = "Fick inte tillgang till mikrofon: " + e.message;
+      });
+    }
+
+    // ---- rendering ----
+    function activeTargets(){
+      // visa de tva sprak som inte ar kallsprаket; innan tal: sv + en som standard
+      if(!currentSource) return ["sv","en"];
+      return TARGET_LANGS.filter(function(c){ return c !== currentSource; });
+    }
+    function render(){
+      var targets = activeTargets();
+      el.panels.forEach(function(p, i){
+        var code = targets[i];
+        var meta = LANGS[code];
+        p.querySelector(".swatch").style.background = meta.color;
+        p.querySelector(".lname").textContent = meta.name;
+        var box = p.querySelector(".text");
+        var f = lines[code].final, im = lines[code].interim;
+        if(!f && !im){
+          box.innerHTML = '<span class="placeholder">' + escapeHtml(meta.ph) + '</span>';
+        } else {
+          box.innerHTML = escapeHtml(f) + (im ? ' <span class="interim">'+escapeHtml(im)+'</span>' : '');
+        }
+      });
+      el.speakingLang.textContent = currentSource ? LANGS[currentSource].name : "väntar";
+    }
+    function escapeHtml(s){
+      return (s||"").replace(/[&<>"]/g, function(c){
+        return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];
+      });
+    }
+
+    // ---- detekterat kallsprak ur ett resultat ----
+    function detectedCode(result){
+      try{
+        var r = SpeechSDK.AutoDetectSourceLanguageResult.fromResult(result);
+        if(r && r.language) return r.language.split("-")[0];
+      }catch(e){}
+      try{
+        var p = result.properties.getProperty(
+          SpeechSDK.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult);
+        if(p) return p.split("-")[0];
+      }catch(e){}
+      return null;
+    }
+
+    function applyResult(result, isFinal){
+      var src = detectedCode(result);
+      if(src && LANGS[src]) currentSource = src;
+      var targets = activeTargets();
+      targets.forEach(function(code){
+        var txt = "";
+        try{ txt = result.translations.get(code) || ""; }catch(e){}
+        if(isFinal){
+          lines[code].final = txt;
+          lines[code].interim = "";
+        } else {
+          lines[code].interim = txt;
+        }
+      });
+      render();
+    }
+
+    // ---- igenkanning ----
+    function buildRecognizer(){
+      var key = localStorage.getItem("az_key");
+      var region = localStorage.getItem("az_region");
+      var cfg = SpeechSDK.SpeechTranslationConfig.fromSubscription(key, region);
+      TARGET_LANGS.forEach(function(t){ cfg.addTargetLanguage(t); });
+      // kontinuerlig sprakidentifiering under hela sessionen
+      cfg.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_LanguageIdMode, "Continuous");
+
+      var auto = SpeechSDK.AutoDetectSourceLanguageConfig.fromLanguages(SOURCE_LANGS);
+
+      var micId = localStorage.getItem("az_mic") || "";
+      var audio = micId
+        ? SpeechSDK.AudioConfig.fromMicrophoneInput(micId)
+        : SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+
+      var rec = SpeechSDK.TranslationRecognizer.FromConfig(cfg, auto, audio);
+
+      rec.recognizing = function(s,e){
+        if(e.result.reason === SpeechSDK.ResultReason.TranslatingSpeech){
+          applyResult(e.result, false);
+        }
+      };
+      rec.recognized = function(s,e){
+        if(e.result.reason === SpeechSDK.ResultReason.TranslatedSpeech){
+          applyResult(e.result, true);
+        }
+      };
+      rec.canceled = function(s,e){
+        if(e.reason === SpeechSDK.CancellationReason.Error){
+          setStatus("fel: " + (e.errorDetails || "okänt"), "err");
+        }
+        if(running && !manualStop){
+          // forsok aterstarta efter kort paus
+          setStatus("ateransluter", "warn");
+          scheduleRestart();
+        }
+      };
+      rec.sessionStarted = function(){ setStatus("lyssnar", "ok"); };
+      rec.sessionStopped = function(){
+        if(running && !manualStop) scheduleRestart();
+      };
+      return rec;
+    }
+
+    function scheduleRestart(){
+      clearTimeout(restartTimer);
+      restartTimer = setTimeout(function(){
+        if(running && !manualStop){ stopInternal(start); }
+      }, 1500);
+    }
+
+    function start(){
+      if(!saved()){ openSetup(); return; }
+      if(!SpeechSDK){ setStatus("SDK laddades inte", "err"); return; }
+      manualStop = false;
+      try{
+        recognizer = buildRecognizer();
+      }catch(err){
+        setStatus("kunde inte starta: " + err.message, "err");
+        return;
+      }
+      setStatus("ansluter", "warn");
+      recognizer.startContinuousRecognitionAsync(function(){
+        running = true;
+        el.startBtn.textContent = "Stoppa";
+        el.startBtn.classList.remove("primary");
+      }, function(err){
+        setStatus("startfel: " + err, "err");
+      });
+    }
+
+    function stopInternal(done){
+      if(!recognizer){ if(done) done(); return; }
+      var r = recognizer; recognizer = null;
+      r.stopContinuousRecognitionAsync(function(){
+        try{ r.close(); }catch(e){}
+        if(done) done();
+      }, function(){ if(done) done(); });
+    }
+
+    function stop(){
+      manualStop = true;
+      running = false;
+      clearTimeout(restartTimer);
+      el.startBtn.textContent = "Starta";
+      el.startBtn.classList.add("primary");
+      setStatus("stoppad", null);
+      stopInternal();
+    }
+
+    function clearText(){
+      TARGET_LANGS.forEach(function(c){ lines[c].final=""; lines[c].interim=""; });
+      currentSource = null;
+      render();
+    }
+
+    // ---- setup overlay ----
+    function openSetup(){ load(); refreshMics(); el.overlay.hidden = false; }
+    function closeSetup(){ el.overlay.hidden = true; }
+
+    el.saveBtn.addEventListener("click", function(){
+      var k = el.key.value.trim(), r = el.region.value.trim().toLowerCase().replace(/\s+/g,"");
+      if(!k || !r){ el.setupErr.textContent = "Fyll i bade nyckel och region."; return; }
+      localStorage.setItem("az_key", k);
+      localStorage.setItem("az_region", r);
+      localStorage.setItem("az_mic", el.mic.value || "");
+      el.setupErr.textContent = "";
+      closeSetup();
+      setStatus("redo att starta", null);
+    });
+    el.refreshMics.addEventListener("click", refreshMics);
+    el.setupBtn.addEventListener("click", openSetup);
+
+    el.startBtn.addEventListener("click", function(){ running ? stop() : start(); });
+    el.clearBtn.addEventListener("click", clearText);
+    el.fsBtn.addEventListener("click", function(){
+      if(document.fullscreenElement){ document.exitFullscreen(); }
+      else { document.documentElement.requestFullscreen(); }
+    });
+
+    // ---- losenordslas ----
+    // Hash av standardlosenordet "brollop2026". Byt genom att ersatta vardet nedan
+    // med SHA-256 av ditt eget losenord. Generera i webblasarens konsol med:
+    //   crypto.subtle.digest("SHA-256", new TextEncoder().encode("DITTLOSEN"))
+    //     .then(b=>console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("")))
+    var PW_HASH = "6960e1b47d11a61d93e54512d27494d52aba732c1f1598121d115216972a043d";
+
+    var lockOverlay = document.getElementById("lockOverlay");
+    var pwInput = document.getElementById("pw");
+    var unlockBtn = document.getElementById("unlockBtn");
+    var pwErr = document.getElementById("pwErr");
+
+    function sha256hex(str){
+      if(!(window.crypto && crypto.subtle)){
+        return Promise.reject(new Error("nosubtle"));
+      }
+      return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str)).then(function(buf){
+        return Array.prototype.map.call(new Uint8Array(buf), function(b){
+          return b.toString(16).padStart(2,"0");
+        }).join("");
+      });
+    }
+
+    function tryUnlock(){
+      sha256hex(pwInput.value).then(function(h){
+        if(h === PW_HASH){
+          sessionStorage.setItem("unlocked","1");
+          lockOverlay.hidden = true;
+          pwErr.textContent = "";
+          boot();
+        } else {
+          pwErr.textContent = "Fel lösenord.";
+          pwInput.value = "";
+          pwInput.focus();
+        }
+      }).catch(function(){
+        pwErr.textContent = "Öppna sidan via https eller localhost för att låset ska fungera.";
+      });
+    }
+
+    unlockBtn.addEventListener("click", tryUnlock);
+    pwInput.addEventListener("keydown", function(e){ if(e.key === "Enter") tryUnlock(); });
+
+    // ---- init ----
+    function boot(){
+      load();
+      render();
+      if(saved()){ setStatus("redo att starta", null); }
+      else { openSetup(); }
+      if(!SpeechSDK){ setStatus("SDK laddades inte, kontrollera internet", "err"); }
+    }
+
+    if(sessionStorage.getItem("unlocked") === "1"){
+      boot();
+    } else {
+      lockOverlay.hidden = false;
+      pwInput.focus();
+    }
+  })();
+  </script>
+</body>
+</html>
